@@ -4,8 +4,10 @@
         [clojure.tools.logging :only (info error)]
         [clojure.java.io :only (file copy)])
   (:require clj-webdriver.firefox
-            [clj-commons-exec :as exec])
+            clojure-csv.core
+            net.cgrand.enlive-html)
   (:import org.pdfbox.util.PDFMergerUtility))
+;(require ['net.cgrand.enlive-html :as 'e])
 
 (def temp-dir "/tmp/journal_hound/temp")
 (def download-dir "/tmp/journal_hound/downloads")
@@ -13,20 +15,95 @@
 (def dest-dir "/home/ennus/Dropbox/periodicals")
 (def webdriver-dir "/home/ennus/code/journal_hound/webdriver.xpi")
 (def journal-list-url "http://ieeexplore.ieee.org/otherfiles/OPACJrnListIEEE.txt")
+(def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/servlet/opac?punumber=")
+(def journal-info-url "http://ieeexplore.ieee.org/xpl/opacissue.jsp?punumber=")
+(def journals
+  #{"Computer"
+   "Software, IEEE"
+   "Spectrum, IEEE"
+   "Intelligent Systems, IEEE"
+   "Network, IEEE"
+   "Networking, IEEE/ACM Transactions on"
+   "Internet Computing, IEEE"
+   "Micro, IEEE"
+   "Technology and Society Magazine, IEEE"
+   "Mobile Computing, IEEE Transactions on"
+   "Pervasive Computing, IEEE"
+   "Security & Privacy, IEEE"
+   "Wireless Communications, IEEE"
+   "Wireless Communications, IEEE Transactions on"
+   "Software Engineering, IEEE Transactions on"
+   "Consumer Electronics, IEEE Transactions on"
+   "Network and Service Management, IEEE Transactions on"})
 
-(comment
-(import '(java.net URL)
-        '(java.lang StringBuilder)
-        '(java.io BufferedReader InputStreamReader))
+(defn str->num [s]
+  (try (if (re-matches (re-pattern "\\d+") s) (read-string s))
+    (catch Exception e nil)))
 
-(defn fetch-url
-  "Return the web page as a string."
-  [address]
-  (let [url (URL. address)]
-    (with-open [stream (. url (openStream))]
-      (let [buf (BufferedReader. (InputStreamReader. stream))]
-        (apply str (line-seq buf))))))
-)
+(defn get-journal-urls []
+  (with-open [rdr (clojure.java.io/reader journal-list-url)]
+    (reduce (fn [a b] 
+              (let [line (first (clojure-csv.core/parse-csv b))
+                   [title pub-num _ end-year current issues-per-year] line]
+                (if (contains? journals title) 
+                  (conj a {:title title 
+                           :pub-num (str->num pub-num)
+                           :current-vol (str->num current)}) 
+                  a)))
+            [] 
+            (line-seq rdr))))
+
+(defn get-file-name [j]
+  (let [{:keys [title current-vol current-issue]} j]
+    (str 
+      (-> title 
+        .toLowerCase
+        (.replace " " "_")
+        (.replace "," "")
+        (.replace "/" "_")
+        (.replace "&" "and"))
+         "_vol"
+         (format "%02d" current-vol) 
+         "_issue"
+         (format "%02d" current-issue))))
+
+(defn get-files-with-extension [dir extension]
+  (filter #(and (.isFile %) (.endsWith (.toLowerCase (.getName %)) (str "." extension))) 
+          (file-seq (clojure.java.io/file dir))))
+
+(defn get-downloaded-journals []
+  (into #{} (map #(-> % 
+                    .getName 
+                    (.replace ".pdf" "")) 
+                 (get-files-with-extension dest-dir "pdf"))))
+
+(defn get-current-issue [pub-num]
+  (let [parsed-url (net.cgrand.enlive-html/html-resource 
+                     (clojure.java.io/as-url (str journal-info-url pub-num)))
+        date-elements (net.cgrand.enlive-html/select parsed-url [:table [:td]])
+        reduce-fn (fn [a b] 
+                    (let [[_ year vol _ issue]
+                          (re-find #"(\d*),Vol (.*\d*),Issue( )?(\d{1,2})?" 
+                                   (first (:content b)))
+                          date (into [] (map str->num [year vol issue]))]
+                      (if (every? #(not (nil? %)) date)
+                        (conj a date) 
+                        a)))]
+    (last (reduce reduce-fn (sorted-set) date-elements))))
+
+(defn get-outdated-journals
+  "Returns all journals for which the latest issue is not in the destination directory."
+  []
+  (doall (let [downloaded (get-downloaded-journals)]
+    (filter (fn [j] (not (contains? (get-downloaded-journals) (get-file-name j))))
+      (map #(assoc % 
+                   :current-issue 
+                   (nth (get-current-issue (:pub-num %)) 2)) 
+           (get-journal-urls))))))
+
+(defn get-journal-info [url]
+  (with-open [rdr (clojure.java.io/reader url)]
+    (reduce conj [] (line-seq rdr))))
 
 (defn request-user-pass []
   (let [get-input (fn [p] (print p) (flush) (read-line))
@@ -53,16 +130,15 @@
       (doseq [child (.listFiles f)]
         (delete-file-recursively child silently)))))
 
-(defn get-files-with-extension [dir extension]
-  (filter #(and (.isFile %) (.endsWith (.toLowerCase (.getName %)) (str "." extension))) 
-          (file-seq (clojure.java.io/file dir))))
-
-(defn get-page-pdfs [page-num]
+(defn get-page-pdfs
+  "Downloads all PDFs on the current page."
+  [page-num]
   (loop [pdf-count 0]
     (let [pdf-links (find-elements {:tag :a, :text "PDF"})]
       (if (< pdf-count (count pdf-links))
         (do 
-          (info "Page: " page-num " pdf: " pdf-count " links: " (count pdf-links))
+          (println "Fetching PDF" (str (inc pdf-count) "/" (count pdf-links)) 
+                   "on page" page-num ".")
           (click (nth pdf-links pdf-count)) 
           ; wait for download to start
           (while (empty? (get-files-with-extension download-dir "pdf")))
@@ -76,10 +152,10 @@
                                           page-num pdf-count))))
           (recur (inc pdf-count)))))))
 
-(defn get-periodical-pdfs
-  "Fetches all PDFs on all pages for the current issue of a periodical"
+(defn get-journal-pdfs
+  "Fetches all PDFs on all pages for the current issue of a journal"
   ; TODO: doesn't work because it doesn't wait for PDFs to start dling or finish
-  ([] (get-periodical-pdfs 2))
+  ([] (get-journal-pdfs 2))
   ([next-page]
    (get-page-pdfs (- next-page 1))
    (let [next-page-link (find-element {:tag :a, :text (str next-page)})]
@@ -92,34 +168,50 @@
     (.setDestinationFileName merger (str dest-dir "/" journal-name ".pdf"))
     (.mergeDocuments merger)))
     
-(defn get-periodicals []
-  "Fetches all periodicals"
-  (println "Getting username and password...")
-  (let [[username password] ;["karinin1" "asdf"]]
-        (request-user-pass)]
-    (println "Emptying directories")
-    (.mkdir (java.io.File. temp-dir))
-    (.mkdir (java.io.File. download-dir))
-    (empty-directory temp-dir)
-    (empty-directory download-dir)
-    (println "Setting driver")
-    (set-driver! (clj-webdriver.core/new-driver 
-                   {:browser :firefox :profile 
-                    (doto (clj-webdriver.firefox/new-profile) 
-                      (clj-webdriver.firefox/enable-extension webdriver-dir)
-                      ;; Auto-download PDFs to a specific folder
-                      (clj-webdriver.firefox/set-preferences 
-                           {:browser.download.dir download-dir, 
-                            :browser.download.folderList 2 
-                            :browser.helperApps.neverAsk.saveToDisk "application/pdf"}))}))
-    (println "Logging in")
-    ;(to "http://login.libproxy.aalto.fi/")
-    (to "http://ieeexplore.ieee.org.libproxy.aalto.fi/servlet/opac?punumber=2") ; Computer
-    (input-text {:name "j_username"} username)
-    (input-text {:name "j_password"} password)
-    (click {:value "Login"})
-    ;(click {:text "IEEE Xplore"}) 
-    (click {:src "/assets/img/btn.viewcontents.gif"})
-    (get-periodical-pdfs)
-    (merge-documents "computer")))
+(defn update-outdated-journals
+  "Fetches all journals that are outdated."
+  ([]
+   (println "Checking for outdated journals.")
+   (let [outdated (get-outdated-journals)]
+     (if (empty? outdated)
+       (println "All journals are up to date.")
+       (do
+         (println "Updating" (count outdated) "outdated journals:")
+         (doseq [j outdated] (println "  " (:title j)))
+         (update-outdated-journals outdated)))))
+
+  ([outdated]
+   (println "Getting username and password.")
+   (let [[username password] (request-user-pass)]
+     (println "Creating temporary directories if necessary.")
+     (.mkdir (java.io.File. temp-dir))
+     (.mkdir (java.io.File. download-dir))
+     (println "Starting browser.")
+     (set-driver! (clj-webdriver.core/new-driver 
+                    {:browser :firefox :profile 
+                     (doto (clj-webdriver.firefox/new-profile) 
+                       (clj-webdriver.firefox/enable-extension webdriver-dir)
+                       ;; Auto-download PDFs to a specific folder
+                       (clj-webdriver.firefox/set-preferences 
+                         {:browser.download.dir download-dir, 
+                          :browser.download.folderList 2 
+                          :browser.helperApps.neverAsk.saveToDisk "application/pdf"}))}))
+     (println "Logging in.")
+     (to "http://login.libproxy.aalto.fi/")
+     (input-text {:name "j_username"} username)
+     (input-text {:name "j_password"} password)
+     (click {:value "Login"})
+     (click {:text "IEEE Xplore"}) 
+
+     (loop [remaining outdated]
+       (println "Emptying temporary directories.")
+       (empty-directory temp-dir)
+       (empty-directory download-dir)
+       (let [journal (first remaining)]
+         (println "Fetching latest" (:title journal) "journal.")
+         (to (str journal-url (:pub-num journal)))
+         (click {:src "/assets/img/btn.viewcontents.gif"})
+         (get-journal-pdfs)
+         (merge-documents (get-file-name journal))
+         (recur (rest remaining)))))))
 
