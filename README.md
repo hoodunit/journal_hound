@@ -1,35 +1,3 @@
-# journal-hound
+# Journal Hound
 
-FIXME: description
-
-## Installation
-
-Download from http://example.com/FIXME.
-
-## Usage
-
-FIXME: explanation
-
-    $ java -jar journal-hound-0.1.0-standalone.jar [args]
-
-## Options
-
-FIXME: listing of options this app accepts.
-
-## Examples
-
-...
-
-### Bugs
-
-...
-
-### Any Other Sections
-### That You Think
-### Might be Useful
-
-## License
-
-Copyright © 2012 FIXME
-
-Distributed under the Eclipse Public License, the same as Clojure.
+Journal Hound is a Clojure script for fetching IEEE journals. Given a valid Aalto University login, the script will run Firefox, sign in with the specified credentials, and navigate to the IEEE Xplore web site. From there, the script navigates to each of the specified journal pages in turn, downloads all PDFs for the latest issue of the journal, merges them into a single PDF, and puts the merged PDF into a specified directory (for example a Dropbox directory). The user can then pull up the periodicals on another reading device like a tablet and read them in a nicer single-journal format instead of browsing through countless individual PDFs.
