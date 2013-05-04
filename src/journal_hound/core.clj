@@ -13,7 +13,7 @@
 (def download-dir (str journal-hound-dir "/downloads"))
 (def log-file     (str journal-hound-dir "/log"))
 (def dest-dir "/home/ennus/Dropbox/periodicals")
-(def webdriver-dir "/home/ennus/code/journal_hound/webdriver.xpi")
+(def webdriver-dir "/home/ennus/code/github_public/journal_hound/webdriver.xpi")
 (def journal-list-url "http://ieeexplore.ieee.org/otherfiles/OPACJrnListIEEE.txt")
 (def journal-info-url "http://ieeexplore.ieee.org/xpl/opacissue.jsp?punumber=")
 (def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/servlet/opac?punumber=")
@@ -137,8 +137,8 @@
 
 (defn request-user-pass []
   (let [get-input (fn [p] (print p) (flush) (read-line))
-        get-pass (fn [p] (print p) (flush) (read-line))]
-       ; get-pass (fn [p] (print p) (flush) (apply str (. (. System console) readPassword)))]
+       get-pass (fn [p] (print p) (flush) (read-line))]
+       ;get-pass (fn [p] (print p) (flush) (apply str (. (. System console) readPassword)))]
     [(get-input "Username: ") (get-pass "Password: ")]))
 
 (defn delete-file-recursively
@@ -202,15 +202,54 @@
     (.setDestinationFileName merger (str dest-dir "/" journal-name ".pdf"))
     (.mergeDocuments merger)))
 
-(defn login [[user pass]]
+(defn login [user pass]
    (input-text {:name "j_username"} user)
    (input-text {:name "j_password"} pass)
    (click {:value "Login"})
    (try (click {:text "IEEE Xplore"})
      (catch NullPointerException e
        (println "Authentication failed.")
-       (login (request-user-pass)))))
+       (apply login (request-user-pass)))))
+
+(defn create-directories [& dirs]
+  (doseq [d dirs]
+     (.mkdir (java.io.File. d))))
+
+(defn start-browser []
+  (set-driver! (clj-webdriver.core/new-driver 
+                {:browser :firefox :profile 
+                 (doto (clj-webdriver.firefox/new-profile) 
+                   (clj-webdriver.firefox/enable-extension webdriver-dir)
+                   ;; Auto-download PDFs to a specific folder
+                   (clj-webdriver.firefox/set-preferences 
+                    {:browser.download.dir download-dir, 
+                     :browser.download.folderList 2 
+                     :browser.helperApps.neverAsk.saveToDisk "application/pdf"}))})))
+
+(defn initialize-browser []
+   (let [[user pass] (request-user-pass)]
+     (println "Creating temporary directories if necessary.")
+     (create-directories journal-hound-dir temp-dir download-dir)
+     (println "Starting browser.")
+     (start-browser)
+     (println "Logging in.")
+     (to "http://login.libproxy.aalto.fi/")
+     (login user pass)))
     
+(defn update-journals [outdated]
+  (loop [remaining outdated]
+    (println "Emptying temporary directories.")
+    (empty-directory temp-dir)
+    (empty-directory download-dir)
+    (let [journal (first remaining)]
+      (if-not (nil? journal)
+        (do (println "Fetching latest" (:title journal) "journal.")
+            (to (str journal-url (:pub-num journal)))
+            (click {:src "/assets/img/btn.viewcontents.gif"})
+            (get-journal-pdfs)
+            (merge-documents (get-file-name journal))
+            (recur (rest remaining)))))))
+
 (defn update-outdated-journals
   "Fetches all journals that are outdated."
   ([]
@@ -221,38 +260,9 @@
        (do
          (println "Found" (count outdated) "outdated journals:")
          (doseq [j outdated] (println "  " (:title j)))
-         (update-outdated-journals outdated)))))
+         (initialize-browser)
+         (update-journals outdated))))))
 
-  ([outdated]
-   (let [username-password (request-user-pass)]
-     (println "Creating temporary directories if necessary.")
-     (.mkdir (java.io.File. journal-hound-dir))
-     (.mkdir (java.io.File. temp-dir))
-     (.mkdir (java.io.File. download-dir))
-     (println "Starting browser.")
-     (set-driver! (clj-webdriver.core/new-driver 
-                    {:browser :firefox :profile 
-                     (doto (clj-webdriver.firefox/new-profile) 
-                       (clj-webdriver.firefox/enable-extension webdriver-dir)
-                       ;; Auto-download PDFs to a specific folder
-                       (clj-webdriver.firefox/set-preferences 
-                         {:browser.download.dir download-dir, 
-                          :browser.download.folderList 2 
-                          :browser.helperApps.neverAsk.saveToDisk "application/pdf"}))}))
-     (println "Logging in.")
-     (to "http://login.libproxy.aalto.fi/")
-     (login username-password)
-
-     (loop [remaining outdated]
-       (println "Emptying temporary directories.")
-       (empty-directory temp-dir)
-       (empty-directory download-dir)
-       (let [journal (first remaining)]
-         (if-not (nil? journal)
-           (do (println "Fetching latest" (:title journal) "journal.")
-             (to (str journal-url (:pub-num journal)))
-             (click {:src "/assets/img/btn.viewcontents.gif"})
-             (get-journal-pdfs)
-             (merge-documents (get-file-name journal))
-             (recur (rest remaining)))))))))
+(defn -main []
+  (update-outdated-journals))
 
