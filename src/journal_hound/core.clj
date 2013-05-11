@@ -72,23 +72,6 @@
             [] 
             (line-seq rdr))))
 
-(defn get-file-title [title]
-  (str (-> title
-         .toLowerCase
-         (.replace " " "_")
-         (.replace "," "")
-         (.replace "/" "_")
-         (.replace "&" "and"))))
-
-(defn get-file-name [j]
-  (let [{:keys [title current-vol current-issue]} j]
-    (str 
-      (get-file-title title)
-      "_vol"
-      (format "%02d" current-vol) 
-      "_issue"
-      (format "%02d" @current-issue))))
-
 (defn get-files-with-extension [dir extension]
   (filter #(and (.isFile %) (.endsWith (.toLowerCase (.getName %)) (str "." extension))) 
           (file-seq (clojure.java.io/file dir))))
@@ -111,29 +94,39 @@
                         a)))]
     (nth (last (reduce reduce-fn (sorted-set) date-elements)) 2)))
 
+(defn get-file-title [title]
+  (str (-> title
+         .toLowerCase
+         (.replace " " "_")
+         (.replace "," "")
+         (.replace "/" "_")
+         (.replace "&" "and"))))
+
+(defn get-file-name [j]
+  (let [{:keys [title current-vol current-issue]} j]
+    (str 
+      (get-file-title title)
+      "_vol"
+      (format "%02d" current-vol) 
+      "_issue"
+      (format "%02d" current-issue))))
+
 (defn outdated-journal? [downloaded journal]
   (let [title (get-file-title (:title journal))]
     (print (format "%-60s" (:title journal)))
     (flush)
-    (if (or ; not in destination dir --> outdated
-      (loop [dled downloaded]
-        (if (or (nil? dled) (empty? dled)) 
-          true
-          (if (.contains (first dled) title)
-            false
-            (recur (rest dled)))))
-      ; or name is not the latest name --> outdated
-      (not (contains? downloaded (get-file-name journal))))
+    (if (not (contains? downloaded (get-file-name journal)))
       (do (println "Outdated") true)
       (do (println "Recent") false))))
 
 (defn get-outdated-journals
   "Returns all journals for which the latest issue is not in the destination
-  directory. Delays execution of get-current-issue."
+  directory."
   []
-  (doall (filter #(outdated-journal? (get-downloaded-journals) %)
-                 (map #(assoc % :current-issue 
-                              (delay (get-current-issue (:pub-num %)))) (get-journal-urls)))))
+  (let [downloaded-journals (get-downloaded-journals)]
+    (doall (filter #(outdated-journal? downloaded-journals %)
+                   (pmap #(assoc % :current-issue 
+                                 (get-current-issue (:pub-num %))) (get-journal-urls))))))
 
 (defn request-user-pass []
   (let [get-input (fn [p] (print p) (flush) (read-line))
