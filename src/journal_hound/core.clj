@@ -16,7 +16,8 @@
 (def webdriver-dir "/home/ennus/code/github_public/journal_hound/webdriver.xpi")
 (def journal-list-url "http://ieeexplore.ieee.org/otherfiles/OPACJrnListIEEE.txt")
 (def journal-info-url "http://ieeexplore.ieee.org/xpl/opacissue.jsp?punumber=")
-(def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/servlet/opac?punumber=")
+;(def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/servlet/opac?punumber=")
+(def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/xpl/mostRecentIssue.jsp?punumber=")
 (def journals
   #{"Computer"
    "Software, IEEE"
@@ -238,7 +239,7 @@
       (if-not (nil? journal)
         (do (println "Fetching latest" (:title journal) "journal.")
             (to (str journal-url (:pub-num journal)))
-            (click {:src "/assets/img/btn.viewcontents.gif"})
+            ;(click {:src "/assets/img/btn.viewcontents.gif"})
             (get-journal-pdfs)
             (merge-documents (get-file-name journal))
             (recur (rest remaining)))))))
