@@ -199,7 +199,7 @@
 (defn login [user pass]
    (input-text {:name "j_username"} user)
    (input-text {:name "j_password"} pass)
-   (click {:value "Login"})
+   (click {:tag :button, :text "Login"})
    (try (click {:text "IEEE Xplore"})
      (catch NullPointerException e
        (println "Authentication failed.")
@@ -218,7 +218,8 @@
                    (clj-webdriver.firefox/set-preferences 
                     {:browser.download.dir download-dir, 
                      :browser.download.folderList 2 
-                     :browser.helperApps.neverAsk.saveToDisk "application/pdf"}))})))
+                     :browser.helperApps.neverAsk.saveToDisk "application/pdf"
+                     :pdfjs.disabled true}))})))
 
 (defn initialize-browser []
    (let [[user pass] (request-user-pass)]
@@ -246,7 +247,7 @@
 
 (defn update-outdated-journals
   "Fetches all journals that are outdated."
-  ([]
+  []
    (println "Checking for outdated journals.")
    (let [outdated (get-outdated-journals)]
      (if (empty? outdated)
@@ -255,7 +256,7 @@
          (println "Found" (count outdated) "outdated journals:")
          (doseq [j outdated] (println "  " (:title j)))
          (initialize-browser)
-         (update-journals outdated))))))
+         (update-journals outdated)))))
 
 (defn -main []
   (update-outdated-journals))
