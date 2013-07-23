@@ -5,7 +5,8 @@
         [clojure.java.io :only (file copy)])
   (:require clj-webdriver.firefox
             clojure-csv.core
-            net.cgrand.enlive-html)
+            net.cgrand.enlive-html
+            [journal-hound.file-utils :as util])
   (:import org.apache.pdfbox.util.PDFMergerUtility))
 
 (def journal-hound-dir "/tmp/journal_hound")
@@ -16,7 +17,6 @@
 (def webdriver-dir "/home/ennus/code/github_public/journal_hound/webdriver.xpi")
 (def journal-list-url "http://ieeexplore.ieee.org/otherfiles/OPACJrnListIEEE.txt")
 (def journal-info-url "http://ieeexplore.ieee.org/xpl/opacissue.jsp?punumber=")
-;(def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/servlet/opac?punumber=")
 (def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/xpl/mostRecentIssue.jsp?punumber=")
 (def journals
   #{"Computer"
@@ -62,40 +62,39 @@
 
 (defn get-journal-urls []
   (with-open [rdr (clojure.java.io/reader journal-list-url)]
-    (reduce (fn [a b] 
-              (let [line (first (clojure-csv.core/parse-csv b))
-                   [title pub-num _ end-year current issues-per-year] line]
-                (if (contains? journals title) 
-                  (conj a {:title title 
-                           :pub-num (str->num pub-num)
-                           :current-vol (str->num current)}) 
-                  a)))
-            [] 
-            (line-seq rdr))))
-
-(defn get-files-with-extension [dir extension]
-  (filter #(and (.isFile %) (.endsWith (.toLowerCase (.getName %)) (str "." extension))) 
-          (file-seq (clojure.java.io/file dir))))
+    (let [urls (->> (line-seq rdr)
+                    ;(map #(first (clojure-csv.core/parse-csv %)))
+                    (map clojure-csv.core/parse-csv)
+                    (map first)
+                    (map (fn [[title pub-num _ _ current _]] 
+                           {:title title 
+                            :pub-num (str->num pub-num) 
+                            :current-vol (str->num current)}))
+                    (filter #(contains? journals (:title %))))]
+      (dorun urls)
+      urls)))
 
 (defn get-downloaded-journals []
-  (into #{} (map #(-> % .getName (.replace ".pdf" "")) 
-                 (get-files-with-extension dest-dir "pdf"))))
+  (util/get-files-with-extension-as-hash dest-dir "pdf"))
+
+(defn parse-publish-date-from-string [strings]
+  (let [regex #"(\d*),Vol (.*\d*),Issue( )?(\d{1,2})?"
+        get-vals (fn [[_ year vol _ issue]] [year vol issue])]
+        (map #(into [] (map str->num (get-vals (re-find regex %)))) strings)))
 
 (defn get-current-issue [pub-num]
-  (let [parsed-url (net.cgrand.enlive-html/html-resource 
-                     (clojure.java.io/as-url (str journal-info-url pub-num)))
-        date-elements (net.cgrand.enlive-html/select parsed-url [:table [:td]])
-        reduce-fn (fn [a b] 
-                    (let [[_ year vol _ issue]
-                          (re-find #"(\d*),Vol (.*\d*),Issue( )?(\d{1,2})?" 
-                                   (first (:content b)))
-                          date (into [] (map str->num [year vol issue]))]
-                      (if (every? #(not (nil? %)) date)
-                        (conj a date) 
-                        a)))]
-    (nth (last (reduce reduce-fn (sorted-set) date-elements)) 2)))
+  (let [url (clojure.java.io/as-url (str journal-info-url pub-num))
+        parsed-url (net.cgrand.enlive-html/html-resource url)
+        sorted-issues (->> (net.cgrand.enlive-html/select parsed-url [:table [:td]])
+                           (map #(first (:content %)))
+                           (parse-publish-date-from-string)
+                           (filter seq)
+                           (filter (fn [j] (every? #(not (nil? %)) j)))
+                           (sort)
+                           (reverse))]
+    (nth (first sorted-issues) 2)))
 
-(defn get-file-title [title]
+(defn make-journal-file-title [title]
   (str (-> title
          .toLowerCase
          (.replace " " "_")
@@ -103,20 +102,20 @@
          (.replace "/" "_")
          (.replace "&" "and"))))
 
-(defn get-file-name [j]
-  (let [{:keys [title current-vol current-issue]} j]
+(defn make-journal-file-name [journal]
+  (let [{:keys [title current-vol current-issue]} journal]
     (str 
-      (get-file-title title)
+      (make-journal-file-title title)
       "_vol"
       (format "%02d" current-vol) 
       "_issue"
       (format "%02d" current-issue))))
 
 (defn outdated-journal? [downloaded journal]
-  (let [title (get-file-title (:title journal))]
+  (let [title (make-journal-file-title (:title journal))]
     (print (format "%-60s" (:title journal)))
     (flush)
-    (if (not (contains? downloaded (get-file-name journal)))
+    (if (not (contains? downloaded (make-journal-file-name journal)))
       (do (println "Outdated") true)
       (do (println "Recent") false))))
 
@@ -124,10 +123,11 @@
   "Returns all journals for which the latest issue is not in the destination
   directory."
   []
-  (let [downloaded-journals (get-downloaded-journals)]
-    (doall (filter #(outdated-journal? downloaded-journals %)
-                   (pmap #(assoc % :current-issue 
-                                 (get-current-issue (:pub-num %))) (get-journal-urls))))))
+  (let [downloaded-journals (get-downloaded-journals)
+        current-journals-info (pmap #(assoc % :current-issue 
+                                            (get-current-issue (:pub-num %))) 
+                                    (get-journal-urls))]
+    (doall (filter #(outdated-journal? downloaded-journals %) current-journals-info))))
 
 (defn request-user-pass []
   (let [get-input (fn [p] (print p) (flush) (read-line))
@@ -135,51 +135,42 @@
        ;get-pass (fn [p] (print p) (flush) (apply str (. (. System console) readPassword)))]
     [(get-input "Username: ") (get-pass "Password: ")]))
 
-(defn delete-file-recursively
-  "Delete file f. If it's a directory, recursively delete all its contents.
-  Raise an exception if any deletion fails unless silently is true."
-  [f & [silently]]
-  (let [f (clojure.java.io/file f)]
-    (if (.isDirectory f)
-      (doseq [child (.listFiles f)]
-        (delete-file-recursively child silently)))
-    (clojure.java.io/delete-file f silently)))
+(defn wait-for-download-to-start [] 
+  (while (empty? (util/get-files-with-extension download-dir "pdf"))))
 
-(defn empty-directory
-  "Recursively delete all the files in f, but not f itself.
-  Raise an exception if any deletion fails unless silently is true."
-  [f & [silently]]
-  (let [f (clojure.java.io/file f)]
-    (when (.isDirectory f)
-      (doseq [child (.listFiles f)]
-        (delete-file-recursively child silently)))))
+(defn wait-for-download-to-complete [] 
+  (while (or (< (count (util/get-files-with-extension download-dir "pdf")) 1)
+             (not (empty? (util/get-files-with-extension download-dir "part"))))))
 
-(defn get-page-pdfs
-  "Downloads all PDFs on the current page."
-  [page-num]
-  (println "Fetching PDFs from page" page-num)
-  (let [get-pdf-links #(find-elements {:tag :a, :text "PDF"})
-        num-links (count (get-pdf-links))]
-    (println "Found" num-links "links.")
-    (loop [pdf-count 0]
-      (if (< pdf-count num-links)
-        (do ; wait for all PDF links to load
-          (while (< (count (get-pdf-links)) num-links))
-          (let [pdf-links (get-pdf-links)]
-            (println "Fetching PDF" (str (inc pdf-count) "/" (count pdf-links)) 
-                     "on page" page-num ".")
-            (try-times 3 3000 (click (nth pdf-links pdf-count)))
-            ; wait for download to start
-            (while (empty? (get-files-with-extension download-dir "pdf")))
-            (back)
-            ; wait for download to complete
-            (while (or (< (count (get-files-with-extension download-dir "pdf")) 1)
-                       (not (empty? (get-files-with-extension download-dir "part")))))
-            ; move completed file
-            (.renameTo (first (get-files-with-extension download-dir "pdf")) 
-                       (clojure.java.io/file (format "%s/%02d%02d.pdf" temp-dir 
-                                                     page-num pdf-count)))
-            (recur (inc pdf-count))))))))
+(defn get-pdf-links [] 
+  (find-elements {:tag :a, :text "PDF"}))
+
+(defn move-and-rename-downloaded-pdf [page-num pdf-count]
+  (.renameTo (first (util/get-files-with-extension download-dir "pdf")) 
+             (clojure.java.io/file (format "%s/%02d%02d.pdf" temp-dir 
+                                           page-num pdf-count))))
+
+(defn download-pdf [pdf-link]
+  (try-times 3 3000 (click pdf-link))
+  (wait-for-download-to-start)
+  (back)
+  (wait-for-download-to-complete))
+
+(defn wait-for-pdf-links-to-load [count-fn num]
+  (while (< (count-fn) num)))
+
+(defn get-page-pdfs [page-num]
+ (println "Fetching PDFs from page")
+ (let [num-links (count (get-pdf-links))]
+   (println "Found" num-links "links.")
+   (doseq [pdf-count (range num-links)]
+     (do (wait-for-pdf-links-to-load #(count (get-pdf-links)) num-links)
+         (let [pdf-links (get-pdf-links)
+               current-pdf-link (nth pdf-links pdf-count)]
+           (println "Fetching PDF" (str (inc pdf-count) "/" (count pdf-links)) 
+                    "on page" page-num ".")
+           (download-pdf current-pdf-link)
+           (move-and-rename-downloaded-pdf page-num pdf-count))))))
 
 (defn get-journal-pdfs
   "Fetches all PDFs on all pages for the current issue of a journal"
@@ -190,9 +181,9 @@
      (if-not (nil? (:webelement next-page-link))
        (do (click next-page-link) (recur (inc next-page)))))))
 
-(defn merge-documents [journal-name]
+(defn merge-pdfs-with-name [journal-name]
   (let [merger (PDFMergerUtility.)]
-    (doall (map #(.addSource merger %) (sort (get-files-with-extension temp-dir "pdf"))))
+    (doall (map #(.addSource merger %) (sort (util/get-files-with-extension temp-dir "pdf"))))
     (.setDestinationFileName merger (str dest-dir "/" journal-name ".pdf"))
     (.mergeDocuments merger)))
 
@@ -204,10 +195,6 @@
      (catch NullPointerException e
        (println "Authentication failed.")
        (apply login (request-user-pass)))))
-
-(defn create-directories [& dirs]
-  (doseq [d dirs]
-     (.mkdir (java.io.File. d))))
 
 (defn start-browser []
   (set-driver! (clj-webdriver.core/new-driver 
@@ -224,26 +211,30 @@
 (defn initialize-browser []
    (let [[user pass] (request-user-pass)]
      (println "Creating temporary directories if necessary.")
-     (create-directories journal-hound-dir temp-dir download-dir)
+     (util/create-directories journal-hound-dir temp-dir download-dir)
      (println "Starting browser.")
      (start-browser)
      (println "Logging in.")
      (to "http://login.libproxy.aalto.fi/")
      (login user pass)))
     
+(defn empty-temp-directories []
+  (println "Emptying temporary directories.")
+  (util/empty-directory temp-dir)
+  (util/empty-directory download-dir))
+
+(defn navigate-to-journal [journal]
+  (to (str journal-url (:pub-num journal))))
+
+(defn fetch-journal [journal]
+  (println "Fetching latest" (:title journal) "journal.")
+  (empty-temp-directories)
+  (navigate-to-journal journal)
+  (get-journal-pdfs)
+  (merge-pdfs-with-name (make-journal-file-name journal)))
+
 (defn update-journals [outdated]
-  (loop [remaining outdated]
-    (println "Emptying temporary directories.")
-    (empty-directory temp-dir)
-    (empty-directory download-dir)
-    (let [journal (first remaining)]
-      (if-not (nil? journal)
-        (do (println "Fetching latest" (:title journal) "journal.")
-            (to (str journal-url (:pub-num journal)))
-            ;(click {:src "/assets/img/btn.viewcontents.gif"})
-            (get-journal-pdfs)
-            (merge-documents (get-file-name journal))
-            (recur (rest remaining)))))))
+  (for [journal outdated] (fetch-journal journal)))
 
 (defn update-outdated-journals
   "Fetches all journals that are outdated."
@@ -256,7 +247,8 @@
          (println "Found" (count outdated) "outdated journals:")
          (doseq [j outdated] (println "  " (:title j)))
          (initialize-browser)
-         (update-journals outdated)))))
+         (update-journals outdated)
+         (println "All journals have been updated.")))))
 
 (defn -main []
   (update-outdated-journals))
