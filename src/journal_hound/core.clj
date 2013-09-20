@@ -234,7 +234,7 @@
   (merge-pdfs-with-name (make-journal-file-name journal)))
 
 (defn update-journals [outdated]
-  (for [journal outdated] (fetch-journal journal)))
+  (doseq [journal outdated] (fetch-journal journal)))
 
 (defn update-outdated-journals
   "Fetches all journals that are outdated."
