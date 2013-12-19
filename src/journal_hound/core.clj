@@ -14,7 +14,7 @@
 (def download-dir (str journal-hound-dir "/downloads"))
 (def log-file     (str journal-hound-dir "/log"))
 (def dest-dir "/home/ennus/Dropbox/periodicals")
-(def webdriver-dir "/home/ennus/code/github_public/journal_hound/webdriver.xpi")
+(def webdriver-dir "/home/ennus/code/public/journal_hound/webdriver.xpi")
 (def journal-list-url "http://ieeexplore.ieee.org/otherfiles/OPACJrnListIEEE.txt")
 (def journal-info-url "http://ieeexplore.ieee.org/xpl/opacissue.jsp?punumber=")
 (def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/xpl/mostRecentIssue.jsp?punumber=")
