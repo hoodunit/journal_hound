@@ -1,8 +1,14 @@
 (ns journal-hound.file-utils)
 
 (defn get-files-with-extension [dir extension]
-  (filter #(and (.isFile %) (.endsWith (.toLowerCase (.getName %)) (str "." extension))) 
+  (filter #(and (.isFile %)
+                (.endsWith (.toLowerCase (.getName %)) (str "." extension))) 
           (file-seq (clojure.java.io/file dir))))
+
+(defn get-file-names-with-extension [dir extension]
+  (->> (get-files-with-extension dir extension)
+       (map #(.getName %))
+       (into #{})))
 
 (defn get-files-with-extension-as-hash [dir extension]
   (into #{} (map #(-> % .getName (.replace (str "." extension) "")) 
@@ -30,3 +36,9 @@
 (defn create-directories [& dirs]
   (doseq [d dirs]
      (.mkdir (java.io.File. d))))
+
+(defn dir-contains-pdfs? [dir]
+  (seq (get-files-with-extension dir "pdf")))
+
+(defn dir-contains-incomplete-downloads? [dir]
+  (seq (get-files-with-extension dir "part")))
