@@ -7,7 +7,8 @@
             [journal-hound.ieee :as ieee]
             [journal-hound.acm :as acm]))
 
-(def journal-hound-dir "/tmp/journal_hound")
+(def journal-hound-dir (str (System/getProperty "java.io.tmpdir")
+                            "/journal_hound"))
 (def temp-dir     (str journal-hound-dir "/temp"))
 (def download-dir (str journal-hound-dir "/downloads"))
 (def log-file     (str journal-hound-dir "/log"))
