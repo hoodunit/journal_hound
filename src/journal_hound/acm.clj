@@ -45,17 +45,18 @@
 (defn issue-filename [{:keys [year month]}]
   (format "communications_%s_%s.pdf" year month))
 
-(defn get-outdated-journals [{:keys [dest-dir]}]
-  (let [latest-issue (-> (get-latest-issue)
-                         (assoc :title communications-title
-                                :type :acm))
-        downloaded (get-downloaded-journals dest-dir)]
-    (print (format "%-60s" (:title latest-issue)))
-    (if (contains? downloaded (issue-filename latest-issue))
-      (do (println "Up to date") 
-          [])
-      (do (println "Outdated") 
-          [latest-issue]))))
+(defn get-outdated-journals [{:keys [dest-dir acm-journals]}]
+  (when (seq acm-journals)
+    (let [latest-issue (-> (get-latest-issue)
+                           (assoc :title communications-title
+                                  :type :acm))
+          downloaded (get-downloaded-journals dest-dir)]
+      (print (format "%-60s" (:title latest-issue)))
+      (if (contains? downloaded (issue-filename latest-issue))
+        (do (println "Up to date") 
+            [])
+        (do (println "Outdated") 
+            [latest-issue])))))
 
 (defn move-issue [download-dir dest-dir year month]
   (let [orig-file (first (util/get-files-with-extension download-dir "pdf")) 
