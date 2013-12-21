@@ -79,6 +79,7 @@
     (println "Fetching latest" (:title journal) "journal.")
     (empty-temp-directories)
     (fetch-journal journal))
+  (close)
   (println "All journals have been updated."))
 
 (defn check-and-update-outdated-journals []
