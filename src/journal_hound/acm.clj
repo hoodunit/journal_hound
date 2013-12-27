@@ -58,18 +58,43 @@
         (do (println "Outdated") 
             [latest-issue])))))
 
+(defn element-url-starts-with [elem prefix]
+  (->> elem
+       :webelement
+       (#(.getAttribute % "Href"))
+       (#(and % (.startsWith % prefix)))))
+
+(defn get-link-with-url-prefix [prefix]
+  (->> (find-elements {:tag :a})
+       (filter #(element-url-starts-with % prefix))
+       (first)))
+
+(defn click-and-switch-windows [elem]
+  (let [current-window (window)]
+    (click elem)
+    (let [other-window (->> (windows)
+                            (filter #(not= current-window %))
+                            (first))]
+      (switch-to-window other-window))))
+
+(defn start-pdf-download []
+  (click-and-switch-windows (get-link-with-url-prefix "http://dl.acm.org"))
+  (wait-until (find-element {:text "PDF"}) 10000)
+  (click {:text "PDF"}))
+
+(defn download-acm-issue [download-dir year month]
+  (let [issue-url (format "%s/%s/%s" aalto-acm-base-url year month)]
+    (to issue-url)
+    (start-pdf-download)
+    (journal/wait-for-download-to-complete download-dir)
+    (close)))
+
 (defn move-issue [download-dir dest-dir year month]
   (let [orig-file (first (util/get-files-with-extension download-dir "pdf")) 
         file-name (.getName orig-file)
         moved-file-name (format "%s/communications_%d_%d.pdf" dest-dir year month)
         moved-file (clojure.java.io/file moved-file-name)]
     (.renameTo orig-file moved-file)))
-
-(defn download-acm-issue [download-dir year month]
-    (let [url (format "%s/%s/%s" aalto-acm-base-url year month)]
-      (to url)
-      (click {:text "Download a PDF of this issue"})
-      (journal/wait-for-download-to-complete download-dir)))
 
 (defn fetch-journal
   "Assumes you are logged in"
