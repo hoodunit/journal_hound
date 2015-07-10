@@ -7,5 +7,6 @@
                  [clj-webdriver "0.6.0"]
                  [org.apache.pdfbox/pdfbox "1.6.0"]
                  [clojure-csv/clojure-csv "2.0.0-alpha1"]
-                 [enlive "1.0.0"]]
+                 [enlive "1.0.0"]
+                 [clj-http "1.1.2"]]
   :main journal-hound.core)

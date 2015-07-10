@@ -1,29 +1,38 @@
 (ns journal-hound.ieee
-  (:require [clj-webdriver.taxi :refer :all]
+ (:require [clj-webdriver.taxi :refer :all]
             net.cgrand.enlive-html
             clojure-csv.core
+            [clj-http.client :as client]
             [journal-hound.file-utils :as file-utils]
             [journal-hound.util :as util]
             [journal-hound.journal :as journal])
   (:import java.util.Calendar
            org.apache.pdfbox.util.PDFMergerUtility))
 
-(def journal-list-url "http://ieeexplore.ieee.org/otherfiles/OPACJrnListIEEE.txt")
-(def journal-info-url "http://ieeexplore.ieee.org/xpl/opacissue.jsp?punumber=")
+(def journal-list-url "http://ieeexplore.ieee.org/xpl/opacjrnAjax.jsp?reload=true")
+(def journal-list-post-data "psf_t=A&psf_isdld=1&psf_dldfmt=txt")
+(def journal-list-form-params {:psf_t "A" :psf_isdld 1 :psf_dldfmt "txt"})
+(def journal-info-url "http://ieeexplore.ieee.org/servlet/opac?punumber=")
 (def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/xpl/mostRecentIssue.jsp?punumber=")
 
+(defn fetch-journal-info []
+  (-> (client/post journal-list-url {:form-params journal-list-form-params})
+      :body
+      (#(clojure.string/split % #"\n"))))
+
+(defn parse-journal-info []
+  (let [info (fetch-journal-info)]
+    (clojure.string/split info #"\n")))
+
 (defn get-journal-urls [journals]
-  (with-open [rdr (clojure.java.io/reader journal-list-url)]
-    (let [urls (->> (line-seq rdr)
-                    (map clojure-csv.core/parse-csv)
-                    (map first)
-                    (map (fn [[title pub-num _ _ current _]] 
-                           {:title title 
-                            :pub-num (util/str->num pub-num) 
-                            :current-vol (util/str->num current)}))
-                    (filter #(contains? journals (:title %))))]
-      (dorun urls)
-      urls)))
+  (->> (fetch-journal-info)
+       (map clojure-csv.core/parse-csv)
+       (map first)
+       (map (fn [[title pub-num _ _ current _]] 
+              {:title title 
+               :pub-num (util/str->num pub-num) 
+               :current-vol (util/str->num current)}))
+       (filter #(contains? journals (:title %)))))
 
 (defn get-downloaded-journals [dest-dir]
   (file-utils/get-files-with-extension-as-hash dest-dir "pdf"))
