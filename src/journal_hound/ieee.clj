@@ -3,6 +3,7 @@
             net.cgrand.enlive-html
             clojure-csv.core
             [clj-http.client :as client]
+            [clojure.pprint :refer [pprint]]
             [journal-hound.file-utils :as file-utils]
             [journal-hound.util :as util]
             [journal-hound.journal :as journal])
@@ -12,7 +13,11 @@
 (def journal-list-url "http://ieeexplore.ieee.org/xpl/opacjrnAjax.jsp?reload=true")
 (def journal-list-post-data "psf_t=A&psf_isdld=1&psf_dldfmt=txt")
 (def journal-list-form-params {:psf_t "A" :psf_isdld 1 :psf_dldfmt "txt"})
-(def journal-info-url "http://ieeexplore.ieee.org/servlet/opac?punumber=")
+
+(defn journal-info-url [pubnum]
+  (str "http://ieeexplore.ieee.org/xpl/mostRecentIssue.jsp?punumber=" pubnum))
+
+;(def journal-info-url "http://ieeexplore.ieee.org/servlet/opac?punumber=")
 (def journal-url "http://ieeexplore.ieee.org.libproxy.aalto.fi/xpl/mostRecentIssue.jsp?punumber=")
 
 (defn fetch-journal-info []
@@ -20,18 +25,17 @@
       :body
       (#(clojure.string/split % #"\n"))))
 
-(defn parse-journal-info []
-  (let [info (fetch-journal-info)]
-    (clojure.string/split info #"\n")))
-
-(defn get-journal-urls [journals]
+(defn get-all-journal-urls []
   (->> (fetch-journal-info)
        (map clojure-csv.core/parse-csv)
        (map first)
        (map (fn [[title pub-num _ _ current _]] 
               {:title title 
                :pub-num (util/str->num pub-num) 
-               :current-vol (util/str->num current)}))
+               :current-vol (util/str->num current)}))))
+
+(defn get-journal-urls [journals]
+  (->> (get-all-journal-urls)
        (filter #(contains? journals (:title %)))))
 
 (defn get-downloaded-journals [dest-dir]
@@ -42,10 +46,13 @@
         get-vals (fn [[_ year vol _ issue]] [year vol issue])]
         (map #(into [] (map util/str->num (get-vals (re-find regex %)))) strings)))
 
+(def issue-num-selector
+  )
+
 (defn get-current-issue [pub-num]
-  (let [url (clojure.java.io/as-url (str journal-info-url pub-num))
-        parsed-url (net.cgrand.enlive-html/html-resource url)
-        sorted-issues (->> (net.cgrand.enlive-html/select parsed-url [:table [:td]])
+  (let [url (clojure.java.io/as-url (journal-info-url pub-num))
+        parsed-page (net.cgrand.enlive-html/html-resource url)
+        sorted-issues (->> (net.cgrand.enlive-html/select parsed-page [:#jrnl-issue-hdr :td])
                            (map #(first (:content %)))
                            (parse-publish-date-from-string)
                            (filter seq)
